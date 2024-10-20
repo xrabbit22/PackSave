@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PackSave</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: linear-gradient(to right, #f0f0f0, #e0e0e0); margin: 0; }
+        header { background: linear-gradient(to right, #ff7e5f, #feb47b); color: #fff; padding: 20px 0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: transform 0.3s ease; }
+        header h1 { margin: 0; font-size: 2.5em; }
+        header h1:hover { transform: scale(1.1); }
+        main { margin: 20px; }
+        form { display: flex; flex-direction: column; gap: 10px; }
+        input, button { padding: 15px; border: 1px solid #ddd; border-radius: 5px; font-size: 1em; }
+        button { background-color: #333; color: #fff; cursor: pointer; transition: background-color 0.3s ease; }
+        button:hover { background-color: #555; }
+        .hidden { display: none; }
+        .post { background: #fff; margin: 10px 0; padding: 15px; border-radius: 5px; box-shadow: 0 0 5px rgba(0,0,0,0.1); transition: transform 0.3s ease; }
+        .post:hover { transform: scale(1.02); }
+        .post img, .post video { max-width: 100%; border-radius: 5px; cursor: pointer; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; background: #fff; border-radius: 10px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; }
+        .modal-content { max-width: 90%; max-height: 90%; }
+        .modal img, .modal video { max-width: 100%; max-height: 100%; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>PackSave</h1>
+    </header>
+
+    <main id="loginDiv" class="container">
+        <h2>Connexion</h2>
+        <form id="loginForm">
+            <input type="text" placeholder="Nom" id="name" required>
+            <input type="email" placeholder="Email" id="email" required>
+            <input type="password" placeholder="Mot de passe" id="password" required>
+            <button type="submit">Se connecter</button>
+        </form>
+    </main>
+
+    <main id="uploadDiv" class="container hidden">
+        <h2>Mettre en ligne une image ou une vidéo</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="text" placeholder="Titre" id="title" required>
+            <input type="file" id="file" accept="image/*,video/*" required>
+            <button type="submit">Poster</button>
+        </form>
+
+        <h2>Rechercher</h2>
+        <input type="text" placeholder="Titre de l'image ou de la vidéo" id="search">
+        <button onclick="search()">Rechercher</button>
+
+        <div id="results"></div>
+    </main>
+
+    <div id="modal" class="modal">
+        <div class="modal-content" id="modalContent"></div>
+    </div>
+
+    <script>
+        let db;
+
+        function initDB() {
+            let request = indexedDB.open('PostDB', 1);
+            request.onupgradeneeded = function(event) {
+                db = event.target.result;
+                let objectStore = db.createObjectStore('posts', { keyPath: 'id', autoIncrement: true });
+                objectStore.createIndex('title', 'title', { unique: false });
+            };
+            request.onsuccess = function(event) {
+                db = event.target.result;
+                loadPosts();
+            };
+            request.onerror = function(event) {
+                console.log('Erreur : ', event.target.errorCode);
+            };
+        }
+
+        function saveUserSession() {
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            localStorage.setItem('user', JSON.stringify({ name, email, password }));
+        }
+
+        function loadUserSession() {
+            const user = JSON.parse(localStorage.getItem('user'));
+            if (user) {
+                document.getElementById('loginDiv').classList.add('hidden');
+                document.getElementById('uploadDiv').classList.remove('hidden');
+                alert('Connexion réussie! Nom: ' + user.name);
+            }
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            saveUserSession();
+            document.getElementById('loginDiv').classList.add('hidden');
+            document.getElementById('uploadDiv').classList.remove('hidden');
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            let title = document.getElementById('title').value;
+            let file = document.getElementById('file').files[0];
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                let resultDiv = document.createElement('div');
+                resultDiv.classList.add('post');
+                let fileType = file.type.startsWith('image/') ? 'image' : 'video';
+                let fileElement = fileType === 'image' 
+                    ? '<img src="' + e.target.result + '" onclick="openModal(this.src, \'' + fileType + '\')">'
+                    : '<video controls src="' + e.target.result + '" onclick="openModal(this.src, \'' + fileType + '\')"></video>';
+                resultDiv.innerHTML = '<h3>' + title + '</h3>' + fileElement;
+                document.getElementById('results').appendChild(resultDiv);
+                savePost({ title: title, src: e.target.result, type: fileType });
+            };
+            reader.readAsDataURL(file);
+            alert('Fichier ' + title + ' mis en ligne!');
+        });
+
+        function savePost(post) {
+            let transaction = db.transaction(['posts'], 'readwrite');
+            let objectStore = transaction.objectStore('posts');
+            let request = objectStore.add(post);
+            request.onsuccess = function() {
+                console.log('Post sauvegardé : ', post);
+            };
+            request.onerror = function(event) {
+                console.log('Erreur : ', event.target.errorCode);
+            };
+        }
+
+        function loadPosts() {
+            let transaction = db.transaction(['posts'], 'readonly');
+            let objectStore = transaction.objectStore('posts');
+            objectStore.openCursor().onsuccess = function(event) {
+                let cursor = event.target.result;
+                if (cursor) {
+                    let resultDiv = document.createElement('div');
+                    resultDiv.classList.add('post');
+                    let fileElement = cursor.value.type === 'image' 
+                        ? '<img src="' + cursor.value.src + '" onclick="openModal(this.src, \'' + cursor.value.type + '\')">'
+                        : '<video controls src="' + cursor.value.src + '" onclick="openModal(this.src, \'' + cursor.value.type + '\')"></video>';
+                    resultDiv.innerHTML = '<h3>' + cursor.value.title + '</h3>' + fileElement;
+                    document.getElementById('results').appendChild(resultDiv);
+                    cursor.continue();
+                }
+            };
+        }
+
+        function search() {
+            let searchValue = document.getElementById('search').value.toLowerCase();
+            let results = document.getElementById('results').children;
+            for (let i = 0; i < results.length; i++) {
+                let title = results[i].getElementsByTagName('h3')[0].textContent.toLowerCase();
+                results[i].style.display = title.includes(searchValue) ? 'block' : 'none';
+            }
+        }
+
+        function openModal(src, type) {
+            let modal = document.getElementById('modal');
+            let modalContent = document.getElementById('modalContent');
+            modalContent.innerHTML = type === 'image'
+                ? '<img src="' + src + '">'
+                : '<video controls src="' + src + '"></video>';
+            modal.style.display = 'flex';
+        }
+
+        document.getElementById('modal').addEventListener('click', function() {
+            this.style.display = 'none';
+        });
+
+                document.addEventListener('DOMContentLoaded', function() {
+            loadUserSession();
+            initDB();
+        });
+    </script>
+</body>
+</html>
